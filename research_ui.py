@@ -1,5 +1,3 @@
-import hashlib
-import json
 from datetime import date
 
 import pandas as pd
@@ -30,23 +28,6 @@ def render_research(store, state, sample_mode):
     render_macro_snapshot(state.get('stocks', []))
     if sample_mode:
         st.info('둘러보기 중입니다. 개인 목록을 저장하려면 먼저 대시보드 비밀번호를 설정하세요.')
-    else:
-        with st.expander('＋ 종목 추가', expanded=not state.get('stocks')):
-            with st.form('research_manual'):
-                name = st.text_input('종목명', placeholder='예: 삼성전자')
-                with st.expander('종목코드를 알고 있다면 · 선택'):
-                    code = st.text_input('종목코드', max_chars=6)
-                if st.form_submit_button('내 목록에 추가'):
-                    import re
-                    if not name.strip() or (code and not re.fullmatch(r'[0-9]{6}', code)):
-                        st.error('종목명과 숫자 6자리 코드를 확인하세요. 코드는 생략할 수 있습니다.')
-                    else:
-                        known = next((s for s in state.get('stocks', []) if s['name'].strip().casefold() == name.strip().casefold()), {})
-                        identity = known.get('code') or code or 'pending-' + hashlib.sha256(name.strip().casefold().encode()).hexdigest()[:16]
-                        try:
-                            store.save_stock({'code':identity, 'name':name.strip(), 'kind':known.get('kind','관심')})
-                            st.rerun()
-                        except Exception: st.error('목록 저장에 실패했습니다. 저장 공간 설정을 확인하세요.')
     if not sample_mode:
         with st.expander('⭐ 관심종목 관리', expanded=False):
             st.caption('종목명과 6자리 종목코드를 입력하면 시세와 1일·1주·1개월 미니 차트가 표시됩니다.')
