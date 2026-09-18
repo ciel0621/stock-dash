@@ -8,7 +8,7 @@ from filelock import FileLock
 
 
 def empty():
-    return {"stocks": [], "journal": [], "runs": []}
+    return {"stocks": [], "journal": [], "runs": [], "watchlist_initialized": False}
 
 
 class Store:
@@ -70,6 +70,11 @@ class Store:
                     data["stocks"][index] = {**old, **stock}
                     return
             data["stocks"].append(stock)
+        self.change(update)
+
+    def delete_stock(self, code):
+        def update(data):
+            data["stocks"] = [stock for stock in data.get("stocks", []) if stock.get("code") != code]
         self.change(update)
 
     def log(self, collection, item):
