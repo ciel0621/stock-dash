@@ -9,13 +9,25 @@ from ui_v2 import hero, card
 from automatic import brief
 from bi_view import theme, overview, detail, peers_chart
 from chat_research import published, parse_bundle, trends, growth, request_text
-from macro_ui import render_macro_snapshot
+from macro_ui import DEFAULT_WATCHLIST, render_macro_snapshot
 
 
 def render_research(store, state, sample_mode):
     theme()
     hero('내 투자의 현재를 한눈에', '관심 있는 기업을 담고, 판단에 필요한 변화만 확인하세요.', 'PLANX · STOCK RESEARCH')
-    render_macro_snapshot()
+    if not sample_mode and not state.get('watchlist_initialized', False):
+        try:
+            def seed_watchlist(data):
+                existing = {s.get('code') for s in data.get('stocks', [])}
+                for stock in DEFAULT_WATCHLIST:
+                    if stock['code'] not in existing:
+                        data.setdefault('stocks', []).append(stock.copy())
+                data['watchlist_initialized'] = True
+            store.change(seed_watchlist)
+            state = store.read()
+        except Exception:
+            pass
+    render_macro_snapshot(state.get('stocks', []))
     if sample_mode:
         st.info('둘러보기 중입니다. 개인 목록을 저장하려면 먼저 대시보드 비밀번호를 설정하세요.')
     else:
@@ -35,6 +47,38 @@ def render_research(store, state, sample_mode):
                             store.save_stock({'code':identity, 'name':name.strip(), 'kind':known.get('kind','관심')})
                             st.rerun()
                         except Exception: st.error('목록 저장에 실패했습니다. 저장 공간 설정을 확인하세요.')
+    if not sample_mode:
+        with st.expander('⭐ 관심종목 관리', expanded=False):
+            st.caption('종목명과 6자리 종목코드를 입력하면 시세와 1일·1주·1개월 미니 차트가 표시됩니다.')
+            with st.form('watchlist_add'):
+                w_name = st.text_input('종목명', placeholder='예: 삼성전자')
+                w_code = st.text_input('종목코드', placeholder='예: 005930', max_chars=6)
+                if st.form_submit_button('관심종목 추가'):
+                    import re
+                    clean_name, clean_code = w_name.strip(), w_code.strip()
+                    if not clean_name or not re.fullmatch(r'[0-9]{6}', clean_code):
+                        st.error('종목명과 숫자 6자리 종목코드를 입력하세요.')
+                    elif any(s.get('code') == clean_code for s in state.get('stocks', [])):
+                        st.warning('이미 관심종목에 있습니다.')
+                    else:
+                        try:
+                            store.save_stock({'code': clean_code, 'name': clean_name, 'kind': '관심'})
+                            st.rerun()
+                        except Exception:
+                            st.error('관심종목 저장에 실패했습니다.')
+            current_watchlist = state.get('stocks', [])
+            if current_watchlist:
+                for stock in current_watchlist:
+                    a, b = st.columns([5, 1])
+                    a.write(f"**{stock['name']}** · {stock.get('code', '')}")
+                    if b.button('삭제', key=f"delete_watch_{stock.get('code')}"):
+                        try:
+                            store.delete_stock(stock.get('code'))
+                            st.rerun()
+                        except Exception:
+                            st.error('관심종목 삭제에 실패했습니다.')
+            else:
+                st.caption('등록된 관심종목이 없습니다.')
     research = published()
     for r in state.get('chat_research', []):
         if r['code'] not in research or r['as_of'] >= research[r['code']]['as_of']: research[r['code']] = r
