@@ -44,6 +44,11 @@ class KISRealtime:
         self.ws = None
         self.thread = None
         self.stop_event = threading.Event()
+        self.connected = False
+        self.reconnect_count = 0
+        self.last_error = ""
+        self.last_connected_at = None
+        self.last_message_at = None
 
     def set_codes(self, codes):
         codes = {str(c).strip() for c in codes if str(c).strip().isdigit() and len(str(c).strip()) == 6}
@@ -81,6 +86,10 @@ class KISRealtime:
                 ws = websocket.create_connection(KIS_WS_URL, timeout=10)
                 self.ws = ws
                 with self.lock:
+                    self.connected = True
+                    self.last_error = ""
+                    self.last_connected_at = time.time()
+                with self.lock:
                     codes = list(self.codes)
                 for code in codes:
                     ws.send(self._subscribe_message(code))
@@ -89,8 +98,14 @@ class KISRealtime:
                     raw = ws.recv()
                     if not raw:
                         continue
+                    with self.lock:
+                        self.last_message_at = time.time()
                     self._parse(raw)
-            except Exception:
+            except Exception as exc:
+                with self.lock:
+                    self.connected = False
+                    self.reconnect_count += 1
+                    self.last_error = str(exc)[:180]
                 time.sleep(2)
             finally:
                 if self.ws:
@@ -99,6 +114,8 @@ class KISRealtime:
                     except Exception:
                         pass
                 self.ws = None
+                with self.lock:
+                    self.connected = False
 
     def _parse(self, raw):
         if raw.startswith("{"):
@@ -131,6 +148,12 @@ class KISRealtime:
                 "source": "한국투자증권 실시간",
             }
 
+    def status(self):
+        with self.lock:
+            if self.connected:
+                return {"state": "connected", "label": "● 실시간 연결됨", "reconnect_count": self.reconnect_count, "last_error": self.last_error, "last_connected_at": self.last_connected_at, "last_message_at": self.last_message_at}
+            return {"state": "reconnecting", "label": "↻ 자동 재연결 중", "reconnect_count": self.reconnect_count, "last_error": self.last_error, "last_connected_at": self.last_connected_at, "last_message_at": self.last_message_at}
+
     def get(self, code):
         with self.lock:
             return self.prices.get(str(code).strip())
@@ -152,3 +175,10 @@ def realtime_quotes(codes):
     time.sleep(0.15)
     with service.lock:
         return {code: service.prices.get(code) for code in codes if service.prices.get(code)}, "한국투자증권 실시간"
+
+
+def realtime_status():
+    service = get_kis_realtime()
+    if service is None:
+        return {"state": "unconfigured", "label": "○ KIS 미설정", "reconnect_count": 0, "last_error": "Secrets에 KIS_APPKEY/KIS_APPSECRET가 없습니다."}
+    return service.status()
