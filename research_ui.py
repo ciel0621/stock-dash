@@ -30,7 +30,60 @@ def render_research(store, state, sample_mode):
         st.info('둘러보기 중입니다. 개인 목록을 저장하려면 먼저 대시보드 비밀번호를 설정하세요.')
     if not sample_mode:
         with st.expander('⭐ 관심종목 관리', expanded=False):
-            st.caption('종목명과 6자리 종목코드를 입력하면 시세와 1일·1주·1개월 미니 차트가 표시됩니다.')
+            st.caption('드래그로 순서를 바꾸고, 목표가격·손절가격을 저장할 수 있습니다.')
+            current_watchlist = list(state.get('stocks', []))
+            if current_watchlist:
+                try:
+                    from streamlit_sortables import sort_items
+                    labels = [f"{s.get('name', '')} · {s.get('code', '')}" for s in current_watchlist]
+                    sorted_labels = sort_items(labels, key='watchlist_sort')
+                    if sorted_labels and sorted_labels != labels:
+                        by_label = dict(zip(labels, current_watchlist))
+                        reordered = [by_label[label] for label in sorted_labels if label in by_label]
+                        def save_order(data):
+                            by_code = {s.get('code'): s for s in reordered}
+                            data['stocks'] = [by_code.get(s.get('code'), s) for s in reordered] + [s for s in data.get('stocks', []) if s.get('code') not in by_code]
+                            for i, stock in enumerate(data['stocks']):
+                                stock['order'] = i
+                        store.change(save_order)
+                        st.rerun()
+                except Exception:
+                    st.caption('드래그 정렬 기능을 불러오지 못했습니다. 아래 목록은 계속 사용할 수 있습니다.')
+                for stock in current_watchlist:
+                    with st.container(border=True):
+                        st.markdown(f"**{stock.get('name', '')}** · {stock.get('code', '')}")
+                        a, b = st.columns(2)
+                        try:
+                            target_default = float(stock.get('target_price') or 0)
+                            stop_default = float(stock.get('stop_price') or 0)
+                        except (TypeError, ValueError):
+                            target_default, stop_default = 0.0, 0.0
+                        with a:
+                            target = st.number_input('🎯 목표가격 (0=해제)', min_value=0.0, value=target_default, step=100.0, key=f"target_{stock.get('code')}")
+                        with b:
+                            stop = st.number_input('🛑 손절가격 (0=해제)', min_value=0.0, value=stop_default, step=100.0, key=f"stop_{stock.get('code')}")
+                        c1, c2 = st.columns([1, 1])
+                        if c1.button('가격 저장', key=f"save_levels_{stock.get('code')}"):
+                            try:
+                                store.save_stock({
+                                    'code': stock.get('code'),
+                                    'name': stock.get('name'),
+                                    'kind': stock.get('kind', '관심'),
+                                    'target_price': target or None,
+                                    'stop_price': stop or None,
+                                })
+                                st.rerun()
+                            except Exception:
+                                st.error('목표/손절가격 저장에 실패했습니다.')
+                        if c2.button('삭제', key=f"delete_watch_{stock.get('code')}"):
+                            try:
+                                store.delete_stock(stock.get('code'))
+                                st.rerun()
+                            except Exception:
+                                st.error('관심종목 삭제에 실패했습니다.')
+            else:
+                st.caption('등록된 관심종목이 없습니다.')
+            st.divider()
             with st.form('watchlist_add'):
                 w_name = st.text_input('종목명', placeholder='예: 삼성전자')
                 w_code = st.text_input('종목코드', placeholder='예: 005930', max_chars=6)
@@ -47,19 +100,7 @@ def render_research(store, state, sample_mode):
                             st.rerun()
                         except Exception:
                             st.error('관심종목 저장에 실패했습니다.')
-            current_watchlist = state.get('stocks', [])
-            if current_watchlist:
-                for stock in current_watchlist:
-                    a, b = st.columns([5, 1])
-                    a.write(f"**{stock['name']}** · {stock.get('code', '')}")
-                    if b.button('삭제', key=f"delete_watch_{stock.get('code')}"):
-                        try:
-                            store.delete_stock(stock.get('code'))
-                            st.rerun()
-                        except Exception:
-                            st.error('관심종목 삭제에 실패했습니다.')
-            else:
-                st.caption('등록된 관심종목이 없습니다.')
+
     research = published()
     for r in state.get('chat_research', []):
         if r['code'] not in research or r['as_of'] >= research[r['code']]['as_of']: research[r['code']] = r
