@@ -66,16 +66,21 @@ def _watchlist_quote(stock):
     symbol = _yahoo_symbol(stock)
     if not symbol:
         return None, None
-    try:
-        quote = _quote(symbol)
-        charts = {
-            "1일": _sparkline_points(symbol, "1d", "5m"),
-            "1주": _sparkline_points(symbol, "5d", "30m"),
-            "1개월": _sparkline_points(symbol, "1mo", "1d"),
-        }
-        return quote, charts
-    except Exception:
-        return None, None
+    candidates = [symbol]
+    if symbol.endswith(".KS"):
+        candidates.append(symbol[:-3] + ".KQ")
+    for candidate in candidates:
+        try:
+            quote = _quote(candidate)
+            charts = {
+                "1일": _sparkline_points(candidate, "1d", "5m"),
+                "1주": _sparkline_points(candidate, "5d", "30m"),
+                "1개월": _sparkline_points(candidate, "1mo", "1d"),
+            }
+            return quote, charts
+        except Exception:
+            continue
+    return None, None
 
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_macro():
