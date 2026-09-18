@@ -433,6 +433,18 @@ def _render_watchlist(stock_list):
 
 
 def render_macro_snapshot(watchlist=None):
+    try:
+        from kis_realtime import realtime_status
+        kis_status = realtime_status()
+        if kis_status["state"] == "connected":
+            st.success(f'{kis_status["label"]} · 한국투자증권 WebSocket', icon="🟢")
+        elif kis_status["state"] == "reconnecting":
+            count = kis_status.get("reconnect_count", 0)
+            st.warning(f'{kis_status["label"]} · 재연결 {count}회 시도 중', icon="🟡")
+        else:
+            st.info(kis_status["label"], icon="⚪")
+    except Exception:
+        st.info("○ KIS 실시간 상태 확인 필요", icon="⚪")
     st.subheader("시장 한눈에 보기")
     try:
         data = fetch_macro()
