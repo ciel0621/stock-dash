@@ -102,36 +102,76 @@ def _metric_row(data, labels, value_digits=2):
         cols[1].write(f"{item['price']:,.{value_digits}f}")
         cols[2].write(_change_text(item))
 
+def _watch_status(stock, price):
+    target = stock.get("target_price")
+    stop = stock.get("stop_price")
+    try:
+        target = float(target) if target not in (None, "") else None
+        stop = float(stop) if stop not in (None, "") else None
+    except (TypeError, ValueError):
+        target, stop = None, None
+    if target and price >= target:
+        return "target"
+    if stop and price <= stop:
+        return "stop"
+    return "normal"
+
+def _watch_status_text(status):
+    return {"target": "🎯 목표가격 도달", "stop": "🛑 손절가격 도달", "normal": ""}[status]
+
 def _render_watchlist(stock_list):
     if not stock_list:
         st.info("관심종목이 없습니다. 아래에서 종목을 추가해 주세요.")
         return
+    previous = st.session_state.setdefault("watch_alert_status", {})
     for stock in stock_list:
         quote, charts = _watchlist_quote(stock)
-        left, mid, right = st.columns([1.25, 1.1, 2.7])
-        with left:
-            st.markdown(f"**{escape(stock['name'])}**")
-            st.caption(str(stock.get("code", "")))
-        with mid:
-            if quote:
-                st.write(f"₩{quote['price']:,.0f}")
-                st.caption(_change_text(quote, 0))
-            else:
-                st.caption("시세 확인 필요")
-        with right:
-            if charts:
-                chart_cols = st.columns(3)
-                for col, label in zip(chart_cols, ("1일", "1주", "1개월")):
-                    with col:
-                        st.caption(label)
-                        svg = _sparkline_svg(charts.get(label, []))
-                        if svg:
-                            st.markdown(svg, unsafe_allow_html=True)
-                        else:
-                            st.caption("—")
-            else:
-                st.caption("종목코드가 없거나 시세 제공처에서 데이터를 찾지 못했습니다.")
-        st.divider()
+        status = _watch_status(stock, quote["price"]) if quote else "normal"
+        key = str(stock.get("code") or stock.get("name"))
+        if status != "normal" and previous.get(key) != status:
+            st.toast(f"{stock.get('name', '')}: {_watch_status_text(status)}", icon="🎯" if status == "target" else "🛑")
+        previous[key] = status
+        if status == "target":
+            bg, border = "#ecfdf5", "#16a34a"
+        elif status == "stop":
+            bg, border = "#fef2f2", "#dc2626"
+        else:
+            bg, border = "#ffffff", "#e5e7eb"
+        with st.container(border=True):
+            st.markdown(
+                f'<div style="border-left:5px solid {border};background:{bg};padding:8px 10px;border-radius:6px;">'
+                f'<strong>{escape(stock["name"])}</strong> · {escape(str(stock.get("code", "")))}'
+                + (f' · <b>{_watch_status_text(status)}</b>' if status != "normal" else "")
+                + "</div>",
+                unsafe_allow_html=True,
+            )
+            left, mid, right = st.columns([1.25, 1.1, 2.7])
+            with left:
+                target = stock.get("target_price")
+                stop = stock.get("stop_price")
+                targets = []
+                if target not in (None, ""):
+                    targets.append(f"목표 ₩{float(target):,.0f}")
+                if stop not in (None, ""):
+                    targets.append(f"손절 ₩{float(stop):,.0f}")
+                st.caption(" · ".join(targets) if targets else "목표/손절가격 미설정")
+            with mid:
+                if quote:
+                    st.write(f"₩{quote['price']:,.0f}")
+                    st.caption(_change_text(quote, 0))
+                else:
+                    st.caption("시세 확인 필요")
+            with right:
+                if charts:
+                    chart_cols = st.columns(3)
+                    for col, label in zip(chart_cols, ("1일", "1주", "1개월")):
+                        with col:
+                            st.caption(label)
+                            svg = _sparkline_svg(charts.get(label, []))
+                            st.markdown(svg if svg else "—", unsafe_allow_html=bool(svg))
+                else:
+                    st.caption("종목코드가 없거나 시세 제공처에서 데이터를 찾지 못했습니다.")
+
 
 def render_macro_snapshot(watchlist=None):
     st.subheader("시장 한눈에 보기")
