@@ -135,6 +135,38 @@ def _watch_distance(stock, price):
         position = max(0.0, min(1.0, (price - stop) / (target - stop)))
     return {"target_pct": target_pct, "stop_pct": stop_pct, "position": position, "target": target, "stop": stop}
 
+def _watch_risk_reward(distance):
+    if not distance:
+        return None
+    target_pct = distance.get("target_pct")
+    stop_pct = distance.get("stop_pct")
+    if target_pct is None or stop_pct is None:
+        return None
+    upside = target_pct
+    downside = abs(stop_pct)
+    if upside <= 0 or downside <= 0:
+        return None
+    return upside / downside
+
+def _watch_nearest_label(distance):
+    if not distance:
+        return None
+    target_pct = distance.get("target_pct")
+    stop_pct = distance.get("stop_pct")
+    if target_pct is None and stop_pct is None:
+        return None
+    target_dist = abs(target_pct) if target_pct is not None else float("inf")
+    stop_dist = abs(stop_pct) if stop_pct is not None else float("inf")
+    if target_dist == float("inf"):
+        return "🛑 손절만 설정"
+    if stop_dist == float("inf"):
+        return "🎯 목표만 설정"
+    if target_dist < stop_dist:
+        return "🎯 목표가 더 가까움"
+    if stop_dist < target_dist:
+        return "🛑 손절가 더 가까움"
+    return "↔️ 목표·손절 거리 동일"
+
 def _render_distance_gauge(distance):
     if not distance:
         return
@@ -208,13 +240,20 @@ def _render_watchlist(stock_list):
                     st.caption(_change_text(quote, 0))
                     distance = _watch_distance(stock, quote["price"])
                     if distance:
-                        d1, d2 = st.columns(2)
+                        d1, d2, d3 = st.columns(3)
                         with d1:
                             if distance["target_pct"] is not None:
-                                st.metric("🎯 목표까지", f"{distance['target_pct']:+.1f}%")
+                                st.metric("🎯 목표 예상수익률", f"{distance['target_pct']:+.1f}%")
                         with d2:
-                            if distance["stop_pct"] is not None:
+                            rr = _watch_risk_reward(distance)
+                            if rr is not None:
+                                st.metric("⚖️ 손익비 R:R", f"1 : {rr:.2f}")
+                            elif distance["stop_pct"] is not None:
                                 st.metric("🛑 손절까지", f"{distance['stop_pct']:+.1f}%")
+                        with d3:
+                            nearest = _watch_nearest_label(distance)
+                            if nearest:
+                                st.metric("📍 거리 비교", nearest)
                         _render_distance_gauge(distance)
                 else:
                     st.caption("시세 확인 필요")
