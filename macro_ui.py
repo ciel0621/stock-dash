@@ -119,6 +119,53 @@ def _watch_status(stock, price):
 def _watch_status_text(status):
     return {"target": "🎯 목표가격 도달", "stop": "🛑 손절가격 도달", "normal": ""}[status]
 
+def _watch_distance(stock, price):
+    try:
+        target = float(stock.get("target_price")) if stock.get("target_price") not in (None, "") else None
+        stop = float(stock.get("stop_price")) if stock.get("stop_price") not in (None, "") else None
+        price = float(price)
+    except (TypeError, ValueError):
+        return None
+    if price <= 0:
+        return None
+    target_pct = (target / price - 1) * 100 if target and target > 0 else None
+    stop_pct = (stop / price - 1) * 100 if stop and stop > 0 else None
+    position = None
+    if target and stop and target > stop:
+        position = max(0.0, min(1.0, (price - stop) / (target - stop)))
+    return {"target_pct": target_pct, "stop_pct": stop_pct, "position": position, "target": target, "stop": stop}
+
+def _render_distance_gauge(distance):
+    if not distance:
+        return
+    target_pct = distance["target_pct"]
+    stop_pct = distance["stop_pct"]
+    position = distance["position"]
+    if position is None:
+        if target_pct is not None:
+            st.caption(f"🎯 목표까지 {target_pct:+.1f}%")
+        if stop_pct is not None:
+            st.caption(f"🛑 손절까지 {stop_pct:+.1f}%")
+        return
+    st.markdown(
+        f'''
+        <div style="margin:2px 0 8px 0;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+            <span>🛑 {distance["stop"]:,.0f}원 ({stop_pct:+.1f}%)</span>
+            <b>현재가 위치 {position*100:.0f}%</b>
+            <span>🎯 {distance["target"]:,.0f}원 ({target_pct:+.1f}%)</span>
+          </div>
+          <div style="position:relative;height:12px;background:linear-gradient(90deg,#fee2e2 0%,#f3f4f6 50%,#dcfce7 100%);border-radius:999px;border:1px solid #e5e7eb;">
+            <div style="position:absolute;left:calc({position*100:.2f}% - 7px);top:-4px;width:14px;height:20px;background:#111827;border-radius:7px;box-shadow:0 1px 3px rgba(0,0,0,.25);"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:#6b7280;margin-top:3px;">
+            <span>손절 영역</span><span>현재가</span><span>목표 영역</span>
+          </div>
+        </div>
+        ''',
+        unsafe_allow_html=True,
+    )
+
 def _render_watchlist(stock_list):
     if not stock_list:
         st.info("관심종목이 없습니다. 아래에서 종목을 추가해 주세요.")
@@ -159,6 +206,16 @@ def _render_watchlist(stock_list):
                 if quote:
                     st.write(f"₩{quote['price']:,.0f}")
                     st.caption(_change_text(quote, 0))
+                    distance = _watch_distance(stock, quote["price"])
+                    if distance:
+                        d1, d2 = st.columns(2)
+                        with d1:
+                            if distance["target_pct"] is not None:
+                                st.metric("🎯 목표까지", f"{distance['target_pct']:+.1f}%")
+                        with d2:
+                            if distance["stop_pct"] is not None:
+                                st.metric("🛑 손절까지", f"{distance['stop_pct']:+.1f}%")
+                        _render_distance_gauge(distance)
                 else:
                     st.caption("시세 확인 필요")
             with right:
