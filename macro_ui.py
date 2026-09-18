@@ -6,6 +6,9 @@ import requests
 import streamlit as st
 
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+NAVER_REALTIME_URL = "https://polling.finance.naver.com/api/realtime/domestic/stock/{code}"
+NAVER_INDEX_URL = "https://polling.finance.naver.com/api/realtime/domestic/index/{code}"
+NAVER_FX_URL = "https://m.stock.naver.com/front-api/marketIndex/exchange/main"
 DEFAULT_WATCHLIST = [
     {"code": "005930", "name": "삼성전자", "kind": "관심"},
     {"code": "000660", "name": "SK하이닉스", "kind": "관심"},
@@ -13,8 +16,14 @@ DEFAULT_WATCHLIST = [
     {"code": "035420", "name": "NAVER", "kind": "관심"},
 ]
 
+
 def _quote(symbol, range_="5d", interval="1d"):
-    response = requests.get(YAHOO_CHART_URL.format(symbol=symbol), params={"range": range_, "interval": interval}, headers={"User-Agent": "Mozilla/5.0"}, timeout=(5, 10))
+    response = requests.get(
+        YAHOO_CHART_URL.format(symbol=symbol),
+        params={"range": range_, "interval": interval},
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=(5, 10),
+    )
     response.raise_for_status()
     result = response.json()["chart"]["result"][0]
     meta = result["meta"]
@@ -27,7 +36,124 @@ def _quote(symbol, range_="5d", interval="1d"):
     previous = points[-2][1] if len(points) > 1 else meta.get("previousClose")
     change = close - previous if previous is not None else None
     pct = change / previous * 100 if previous not in (None, 0) and change is not None else None
-    return {"symbol": symbol, "price": float(close), "change": float(change) if change is not None else None, "pct": float(pct) if pct is not None else None, "timestamp": ts}
+    return {
+        "symbol": symbol,
+        "price": float(close),
+        "change": float(change) if change is not None else None,
+        "pct": float(pct) if pct is not None else None,
+        "timestamp": ts,
+    }
+
+
+def _naver_realtime_quote(code):
+    response = requests.get(
+        NAVER_REALTIME_URL.format(code=code),
+        headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com/"},
+        timeout=(5, 10),
+    )
+    response.raise_for_status()
+    data = (response.json().get("datas") or [None])[0]
+    if not data:
+        raise ValueError(f"no Naver realtime data: {code}")
+    close = data.get("closePrice")
+    change = data.get("compareToPreviousClosePrice")
+    pct = data.get("fluctuationsRatio")
+    traded_at = data.get("localTradedAt")
+    if close is None:
+        raise ValueError(f"no Naver price: {code}")
+    timestamp = int(datetime.fromisoformat(traded_at).timestamp()) if traded_at else int(datetime.now(tz=ZoneInfo("Asia/Seoul")).timestamp())
+    return {
+        "symbol": code,
+        "price": float(str(close).replace(",", "")),
+        "change": float(str(change).replace(",", "")) if change not in (None, "") else None,
+        "pct": float(str(pct).replace(",", "")) if pct not in (None, "") else None,
+        "timestamp": timestamp,
+        "market_status": data.get("marketStatus"),
+        "source": "Naver Finance",
+    }
+
+
+def _naver_index_quote(code):
+    response = requests.get(
+        NAVER_INDEX_URL.format(code=code),
+        headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com/"},
+        timeout=(5, 10),
+    )
+    response.raise_for_status()
+    data = (response.json().get("datas") or [None])[0]
+    if not data:
+        raise ValueError(f"no Naver index data: {code}")
+    close = data.get("closePrice")
+    change = data.get("compareToPreviousClosePrice")
+    pct = data.get("fluctuationsRatio")
+    traded_at = data.get("localTradedAt")
+    if close is None:
+        raise ValueError(f"no Naver index price: {code}")
+    timestamp = int(datetime.fromisoformat(traded_at).timestamp()) if traded_at else int(datetime.now(tz=ZoneInfo("Asia/Seoul")).timestamp())
+    return {
+        "symbol": code,
+        "price": float(str(close).replace(",", "")),
+        "change": float(str(change).replace(",", "")) if change not in (None, "") else None,
+        "pct": float(str(pct).replace(",", "")) if pct not in (None, "") else None,
+        "timestamp": timestamp,
+        "market_status": data.get("marketStatus"),
+        "source": "Naver Finance",
+    }
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _naver_fx_quotes():
+    response = requests.get(
+        NAVER_FX_URL,
+        headers={"User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/"},
+        timeout=(5, 10),
+    )
+    response.raise_for_status()
+    payload = response.json()
+    items = []
+
+    def walk(value):
+        if isinstance(value, dict):
+            if value.get("reutersCode") in {"FX_USDKRW", "FX_JPYKRW", "FX_EURKRW"}:
+                items.append(value)
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    walk(payload)
+    result = {}
+    labels = {
+        "FX_USDKRW": "USD/KRW",
+        "FX_JPYKRW": "JPY/KRW",
+        "FX_EURKRW": "EUR/KRW",
+    }
+    for item in items:
+        code = item.get("reutersCode")
+        label = labels.get(code)
+        if not label:
+            continue
+        close = item.get("closePrice")
+        change = item.get("fluctuations")
+        pct = item.get("fluctuationsRatio")
+        traded_at = item.get("localTradedAt")
+        if close is None:
+            continue
+        timestamp = int(datetime.fromisoformat(traded_at).timestamp()) if traded_at else int(datetime.now(tz=ZoneInfo("Asia/Seoul")).timestamp())
+        result[label] = {
+            "symbol": code,
+            "price": float(str(close).replace(",", "")),
+            "change": float(str(change).replace(",", "")) if change not in (None, "") else None,
+            "pct": float(str(pct).replace(",", "")) if pct not in (None, "") else None,
+            "timestamp": timestamp,
+            "market_status": item.get("marketStatus"),
+            "source": "Naver Finance",
+        }
+    if len(result) < 3:
+        raise ValueError("Naver FX data incomplete")
+    return result
+
 
 def _yahoo_symbol(stock):
     code = str(stock.get("code", "")).strip()
@@ -39,14 +165,21 @@ def _yahoo_symbol(stock):
         return code
     return None
 
+
 @st.cache_data(ttl=60, show_spinner=False)
 def _sparkline_points(symbol, range_, interval):
-    response = requests.get(YAHOO_CHART_URL.format(symbol=symbol), params={"range": range_, "interval": interval}, headers={"User-Agent": "Mozilla/5.0"}, timeout=(5, 10))
+    response = requests.get(
+        YAHOO_CHART_URL.format(symbol=symbol),
+        params={"range": range_, "interval": interval},
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=(5, 10),
+    )
     response.raise_for_status()
     result = response.json()["chart"]["result"][0]
     timestamps = result.get("timestamp") or []
     closes = result.get("indicators", {}).get("quote", [{}])[0].get("close") or []
     return [float(v) for _, v in zip(timestamps, closes) if v is not None]
+
 
 def _sparkline_svg(values, width=150, height=34):
     if len(values) < 2:
@@ -62,37 +195,54 @@ def _sparkline_svg(values, width=150, height=34):
     point_text = " ".join(points)
     return f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg"><polyline fill="none" stroke="{stroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="{point_text}"/></svg>'
 
+
 def _watchlist_quote(stock):
-    symbol = _yahoo_symbol(stock)
-    if not symbol:
+    code = str(stock.get("code", "")).strip()
+    if not (code.isdigit() and len(code) == 6):
         return None, None
-    candidates = [symbol]
-    if symbol.endswith(".KS"):
-        candidates.append(symbol[:-3] + ".KQ")
-    for candidate in candidates:
-        try:
-            quote = _quote(candidate)
+    try:
+        quote = _naver_realtime_quote(code)
+        symbol = _yahoo_symbol(stock)
+        charts = {}
+        if symbol:
             charts = {
-                "1일": _sparkline_points(candidate, "1d", "5m"),
-                "1주": _sparkline_points(candidate, "5d", "30m"),
-                "1개월": _sparkline_points(candidate, "1mo", "1d"),
+                "1일": _sparkline_points(symbol, "1d", "5m"),
+                "1주": _sparkline_points(symbol, "5d", "30m"),
+                "1개월": _sparkline_points(symbol, "1mo", "1d"),
             }
-            return quote, charts
-        except Exception:
-            continue
-    return None, None
+        return quote, charts
+    except Exception:
+        return None, None
+
 
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_macro():
-    symbols = {"KOSPI": "^KS11", "KOSDAQ": "^KQ11", "USD/KRW": "KRW=X", "JPY/KRW": "JPYKRW=X", "EUR/KRW": "EURKRW=X", "GOLD/USD": "GC=F", "WTI": "CL=F", "US10Y": "^TNX", "DXY": "DX-Y.NYB"}
-    data = {label: _quote(symbol) for label, symbol in symbols.items()}
-    data["GOLD/KRW_G"] = {"price": data["GOLD/USD"]["price"] * data["USD/KRW"]["price"] / 31.1034768, "change": None, "pct": data["GOLD/USD"]["pct"], "timestamp": data["GOLD/USD"]["timestamp"]}
+    data = {
+        "KOSPI": _naver_index_quote("KOSPI"),
+        "KOSDAQ": _naver_index_quote("KOSDAQ"),
+    }
+    data.update(_naver_fx_quotes())
+    yahoo_symbols = {
+        "GOLD/USD": "GC=F",
+        "WTI": "CL=F",
+        "US10Y": "^TNX",
+        "DXY": "DX-Y.NYB",
+    }
+    data.update({label: _quote(symbol) for label, symbol in yahoo_symbols.items()})
+    data["GOLD/KRW_G"] = {
+        "price": data["GOLD/USD"]["price"] * data["USD/KRW"]["price"] / 31.1034768,
+        "change": None,
+        "pct": data["GOLD/USD"]["pct"],
+        "timestamp": data["GOLD/USD"]["timestamp"],
+    }
     return data
+
 
 def _change_text(item, digits=2):
     if item.get("change") is None or item.get("pct") is None:
         return "변동률 확인 필요"
     return f"{item['change']:+.{digits}f} ({item['pct']:+.2f}%)"
+
 
 def _metric_row(data, labels, value_digits=2):
     for label in labels:
@@ -101,6 +251,7 @@ def _metric_row(data, labels, value_digits=2):
         cols[0].markdown(f"**{label}**")
         cols[1].write(f"{item['price']:,.{value_digits}f}")
         cols[2].write(_change_text(item))
+
 
 def _watch_status(stock, price):
     target = stock.get("target_price")
@@ -116,8 +267,10 @@ def _watch_status(stock, price):
         return "stop"
     return "normal"
 
+
 def _watch_status_text(status):
     return {"target": "🎯 목표가격 도달", "stop": "🛑 손절가격 도달", "normal": ""}[status]
+
 
 def _watch_distance(stock, price):
     try:
@@ -135,6 +288,7 @@ def _watch_distance(stock, price):
         position = max(0.0, min(1.0, (price - stop) / (target - stop)))
     return {"target_pct": target_pct, "stop_pct": stop_pct, "position": position, "target": target, "stop": stop}
 
+
 def _watch_risk_reward(distance):
     if not distance:
         return None
@@ -147,6 +301,7 @@ def _watch_risk_reward(distance):
     if upside <= 0 or downside <= 0:
         return None
     return upside / downside
+
 
 def _watch_nearest_label(distance):
     if not distance:
@@ -166,6 +321,7 @@ def _watch_nearest_label(distance):
     if stop_dist < target_dist:
         return "🛑 손절가 더 가까움"
     return "↔️ 목표·손절 거리 동일"
+
 
 def _render_distance_gauge(distance):
     if not distance:
@@ -197,6 +353,7 @@ def _render_distance_gauge(distance):
         ''',
         unsafe_allow_html=True,
     )
+
 
 def _render_watchlist(stock_list):
     if not stock_list:
@@ -278,14 +435,14 @@ def render_macro_snapshot(watchlist=None):
             with st.container(border=True):
                 st.markdown("### 📈 국내 지수")
                 _metric_row(data, ("KOSPI", "KOSDAQ"))
-                st.caption("Yahoo Finance · 지연 시세")
+                st.caption("Naver Finance · 국내 지수 시세")
         with c2:
             with st.container(border=True):
                 st.markdown("### 💱 환율 · 달러")
                 _metric_row(data, ("USD/KRW", "JPY/KRW", "EUR/KRW"))
                 dxy = data["DXY"]
                 st.write(f"**DXY**  {dxy['price']:,.2f}  {_change_text(dxy)}")
-                st.caption("Yahoo Finance · 지연 시세")
+                st.caption("Naver Finance · 원화 환율 / DXY는 Yahoo Finance")
         c3, c4 = st.columns(2)
         with c3:
             with st.container(border=True):
@@ -299,7 +456,7 @@ def render_macro_snapshot(watchlist=None):
             with st.container(border=True):
                 st.markdown("### ⭐ 관심종목")
                 _render_watchlist(watchlist or [])
-                st.caption("관심종목은 대시보드에서 직접 추가·삭제할 수 있습니다.")
+                st.caption("관심종목 현재가는 Naver Finance 기준 · 차트는 Yahoo Finance")
         updated = datetime.fromtimestamp(data["KOSPI"]["timestamp"], tz=ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M KST")
         st.caption(f"마지막 데이터 시각: {updated} · 시세/차트 캐시 약 60초")
     except Exception:
