@@ -201,7 +201,13 @@ def _watchlist_quote(stock):
     if not (code.isdigit() and len(code) == 6):
         return None, None
     try:
-        quote = _naver_realtime_quote(code)
+        from kis_realtime import realtime_quotes
+        kis_quotes, kis_source = realtime_quotes([code])
+        quote = kis_quotes.get(code)
+        if quote:
+            quote["source"] = kis_source
+        else:
+            quote = _naver_realtime_quote(code)
         symbol = _yahoo_symbol(stock)
         charts = {}
         if symbol:
@@ -394,7 +400,7 @@ def _render_watchlist(stock_list):
             with mid:
                 if quote:
                     st.write(f"₩{quote['price']:,.0f}")
-                    st.caption(_change_text(quote, 0))
+                    st.caption(f"{_change_text(quote, 0)} · {quote.get('source', '시세')} · {quote.get('updated_at', '')}")
                     distance = _watch_distance(stock, quote["price"])
                     if distance:
                         d1, d2, d3 = st.columns(3)
@@ -456,7 +462,7 @@ def render_macro_snapshot(watchlist=None):
             with st.container(border=True):
                 st.markdown("### ⭐ 관심종목")
                 _render_watchlist(watchlist or [])
-                st.caption("관심종목 현재가는 Naver Finance 기준 · 차트는 Yahoo Finance")
+                st.caption("관심종목 현재가는 한국투자증권 WebSocket 실시간 우선 · 미연결 시 Naver Finance fallback · 차트는 Yahoo Finance")
         updated = datetime.fromtimestamp(data["KOSPI"]["timestamp"], tz=ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M KST")
         st.caption(f"마지막 데이터 시각: {updated} · 시세/차트 캐시 약 60초")
     except Exception:
